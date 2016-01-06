@@ -131,15 +131,15 @@ func (o *shellProcess) Kill() error {
 
 type ShellCMD struct {
 	Command string
-	Args    []string
+	// Args    []string
 	// print the command before running
 	Verbose bool
 }
 
-func NewShellCMD(cmd string, args ...string) *ShellCMD {
+func NewShellCMD(cmd string) *ShellCMD {
 	return &ShellCMD{
 		Command: cmd,
-		Args:    args,
+		// Args:    args,
 	}
 }
 
@@ -184,18 +184,22 @@ func (sc *ShellCMD) Run(file string, stdout, stderr io.Writer) (proc observe.Pro
 	*/
 	//	o.stderr.Reset()
 	//	o.stdout.Reset()
-	args := make([]string, len(sc.Args))
+	/*
+		args := make([]string, len(sc.Args))
 
-	for i, a := range sc.Args {
-		args[i] = strings.Replace(a, "$file", file, -1)
-	}
+		for i, a := range sc.Args {
+			args[i] = strings.Replace(a, "$file", file, -1)
+		}
+	*/
+	c := strings.Replace(sc.Command, "$file", file, -1)
 
 	//cmd := exec.Command("/usr/bin/script", "-qfc", c)
-	//cmd := exec.Command("/bin/bash", "-c", c)
-	cmd := exec.Command(sc.Command, args...)
+	cmd := exec.Command("/bin/bash", "-c", c)
+	//cmd := exec.Command(sc.Command, args...)
 
 	if sc.Verbose {
-		fmt.Fprintf(stdout, "$ %s %s\n", sc.Command, strings.Join(args, " "))
+		//fmt.Fprintf(stdout, "$ %s %s\n", sc.Command, strings.Join(args, " "))
+		fmt.Fprintf(stdout, "$ %s\n", c)
 	}
 
 	cmd.Stderr = stderr

@@ -30,7 +30,7 @@ func pidExists(pid int) bool {
 func TestKill(t *testing.T) {
 	//t.Skip()
 
-	s := NewShellCMD("./sleep.sh", "$file")
+	s := NewShellCMD("./sleep.sh $file")
 	var stdout, stderr bytes.Buffer
 
 	proc, err := s.Run("20", &stdout, &stderr)
@@ -74,7 +74,7 @@ func TestKill(t *testing.T) {
 
 func TestTerminateWithResult(t *testing.T) {
 	//	t.Skip()
-	s := NewShellCMD("./sleep.sh", "$file")
+	s := NewShellCMD("./sleep.sh $file")
 	var stdout, stderr bytes.Buffer
 
 	proc, err := s.Run("2", &stdout, &stderr)
@@ -116,7 +116,7 @@ func TestTerminateWithResult(t *testing.T) {
 
 func TestTerminate(t *testing.T) {
 	//	t.Skip()
-	s := NewShellCMD("./sleep.sh", "$file")
+	s := NewShellCMD("./sleep.sh $file")
 	var stdout, stderr bytes.Buffer
 
 	proc, err := s.Run("20", &stdout, &stderr)
@@ -158,7 +158,7 @@ func TestTerminate(t *testing.T) {
 }
 
 func TestRunner(t *testing.T) {
-	s := NewShellCMD("./sleep.sh", "$file")
+	s := NewShellCMD("./sleep.sh $file")
 	var stdout, stderr bytes.Buffer
 
 	proc, err := s.Run("0.2", &stdout, &stderr)

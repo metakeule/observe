@@ -32,10 +32,15 @@ type mockProcess struct {
 	waitError bool
 }
 
-func (p *mockProcess) Terminate(timeout time.Duration) error {
-	println("terminated")
-	p.terminated = true
-	return nil
+func (p *mockProcess) Terminate(timeout time.Duration) chan error {
+	term := make(chan error)
+	go func() {
+		println("terminated")
+		p.terminated = true
+		term <- nil
+	}()
+
+	return term
 }
 
 func (p *mockProcess) Kill() error {

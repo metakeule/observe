@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -53,21 +52,25 @@ func TestCreate(t *testing.T) {
 		t.Fatal(err2)
 	}
 
-	var ii = int64(0)
-	var i *int64 = &ii
+	// var ii = int64(0)
+	// var i *int64 = &ii
 
 	f1name := filepath.Join(testdir, "created.txt")
 	subname := filepath.Join(testdir, "sub")
 	f2name := filepath.Join(subname, "subcreated.txt")
-	subsubname := filepath.Join(testdir, "subsub")
-	f3name := filepath.Join(subname, "subsubcreated.txt")
-	expected := []string{
-		f1name, f2name, f3name,
+	subsubname := filepath.Join(subname, "subsub")
+	f3name := filepath.Join(subsubname, "subsubcreated.txt")
+	expected := map[string]bool{
+		f1name: true,
+		f2name: true,
+		f3name: true,
 	}
 
 	finished := make(chan bool)
 
 	m := sync.Mutex{}
+
+	_ = fmt.Printf
 
 	go func() {
 		for {
@@ -77,67 +80,68 @@ func TestCreate(t *testing.T) {
 				finished <- true
 
 			case c := <-changed:
-				fmt.Printf("got: %#v\n", c)
+				// fmt.Printf("got: %#v\n", c)
+				var l int
 				m.Lock()
-				expected := expected[int(*i)]
+				_, isExpected := expected[c]
 				m.Unlock()
-				if c != expected {
-					t.Fatalf("expected %#v, got %#v", expected, c)
-				} else {
+				// fmt.Printf("expected: %v\n", isExpected)
+				if isExpected {
 					m.Lock()
-					atomic.AddInt64(i, 1)
-					fmt.Printf("ok: %d %#v\n", *i, c)
-					if *i == 3 {
-						m.Unlock()
-						fmt.Println("finished")
-						// t.Log("finished")
-						finished <- true
-						return
-					}
+					delete(expected, c)
+					l = len(expected)
 					m.Unlock()
+					// fmt.Printf("length: %d\n", l)
+					if l == 0 {
+						// fmt.Println("finished")
+						finished <- true
+					}
+				} else {
+					// t.Fatalf("unexpected file %#v", c)
+					finished <- true
 				}
 			}
 		}
 	}()
 
-	time.Sleep(time.Duration(400000))
+	// time.Sleep(time.Duration(400000))
 
-	fmt.Printf("creating: %#v\n", f1name)
+	// fmt.Printf("creating: %#v\n", f1name)
 	f, errf := os.Create(f1name)
 	if errf != nil {
 		t.Fatal(errf)
 	}
 	f.Close()
 
-	time.Sleep(time.Duration(400000))
+	// time.Sleep(time.Duration(400000))
 
-	fmt.Printf("creating: %#v\n", subname)
+	// fmt.Printf("creating: %#v\n", subname)
 	if err := os.Mkdir(subname, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	time.Sleep(time.Duration(400000))
-	fmt.Printf("creating: %#v\n", f2name)
+	time.Sleep(time.Millisecond * 40)
+	// fmt.Printf("creating: %#v\n", f2name)
 	f, errf = os.Create(f2name)
 	if errf != nil {
 		t.Fatal(errf)
 	}
 	f.Close()
-	time.Sleep(time.Duration(400000))
+	// time.Sleep(time.Millisecond * 40)
 
-	fmt.Printf("creating: %#v\n", subsubname)
+	// fmt.Printf("creating: %#v\n", subsubname)
 	if err := os.Mkdir(subsubname, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	time.Sleep(time.Duration(400000))
-	fmt.Printf("creating: %#v\n", f3name)
+	time.Sleep(time.Millisecond * 40)
+	// fmt.Printf("creating: %#v\n", f3name)
 	f, errf = os.Create(f3name)
 	if errf != nil {
 		t.Fatal(errf)
 	}
 	f.Close()
 
-	time.Sleep(time.Duration(100))
+	// time.Sleep(time.Duration(100))
 	<-finished
 }

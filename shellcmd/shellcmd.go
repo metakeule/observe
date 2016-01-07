@@ -1,19 +1,20 @@
 package shellcmd
 
 import (
+	"sync"
 	"time"
 	// "bytes"
 	"fmt"
 	"github.com/metakeule/observe"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"syscall"
 )
 
 type shellProcess struct {
 	process *os.Process
+	mx      sync.RWMutex
 }
 
 // Wait waits for the process to finish, setting the running
@@ -22,8 +23,9 @@ type shellProcess struct {
 // an error is returned
 // TODO: maybe introduce an timeout for the wait call
 func (p *shellProcess) Wait() (success bool, err error) {
+	p.mx.RLock()
+	defer p.mx.RUnlock()
 	state, err0 := p.process.Wait()
-
 	if err0 != nil {
 		return false, err0
 		//o.errorf(err.Error())
@@ -66,14 +68,15 @@ func (p *shellProcess) Wait() (success bool, err error) {
 }
 
 // TODO: add timeout for waiting until sending sigterm
-func (o *shellProcess) Terminate(timeout time.Duration) (err error) {
+func (o *shellProcess) Terminate(timeout time.Duration) chan error {
 
-	st := make(chan *os.ProcessState, 1)
+	st := make(chan *os.ProcessState)
+	terminator := make(chan error)
 
 	go func() {
-		var state *os.ProcessState
+		// var state *os.ProcessState
 		//println("running")
-		state, err = o.process.Wait()
+		state, _ := o.process.Wait()
 		//println("running finished")
 		st <- state
 	}()
@@ -83,17 +86,19 @@ func (o *shellProcess) Terminate(timeout time.Duration) (err error) {
 			//println("did finish")
 			// do something
 			if !s.Exited() {
-				err = fmt.Errorf("does not exit %v: %v", o.process.Pid, err)
+				terminator <- fmt.Errorf("does not exit %v", o.process.Pid)
 				//o.errorf(err.Error())
-				return
+				break
 			}
+			o.mx.Lock()
 			o.process = nil
-			return
+			o.mx.Unlock()
+			terminator <- nil
 		case <-time.After(timeout):
 			//println("timeout ended")
-			err = o.process.Signal(syscall.SIGTERM)
+			terminator <- o.process.Signal(syscall.SIGTERM)
 			// fmt.Printf("could not terminate %v: %v\n", o.process.Pid, err)
-			return err
+			//return err
 
 			// fmt.Println("timed out")
 		}
@@ -107,16 +112,20 @@ func (o *shellProcess) Terminate(timeout time.Duration) (err error) {
 
 	//	o.unsetRunning()
 	//o.finished <- true
-	return nil
+	return terminator
 }
 
 func (o *shellProcess) Kill() error {
-
-	if o.process == nil {
+	o.mx.RLock()
+	var noProc = o.process == nil
+	o.mx.RUnlock()
+	if noProc {
 		//o.finished <- true
 		return nil
 	}
 
+	o.mx.Lock()
+	defer o.mx.Unlock()
 	if err := o.process.Kill(); err != nil {
 		// o.errorf("could not kill %v: %v", o.process.Pid, err)
 		//o.finished <- true
@@ -130,15 +139,17 @@ func (o *shellProcess) Kill() error {
 }
 
 type ShellCMD struct {
-	Command string
+	Command  string
+	watchdir string
 	// Args    []string
 	// print the command before running
 	Verbose bool
 }
 
-func NewShellCMD(cmd string) *ShellCMD {
+func NewShellCMD(watchdir string, cmd string) *ShellCMD {
 	return &ShellCMD{
-		Command: cmd,
+		Command:  cmd,
+		watchdir: watchdir,
 		// Args:    args,
 	}
 }
@@ -192,9 +203,12 @@ func (sc *ShellCMD) Run(file string, stdout, stderr io.Writer) (proc observe.Pro
 		}
 	*/
 	c := strings.Replace(sc.Command, "$file", file, -1)
+	c = strings.Replace(c, "$wd", sc.watchdir, -1)
 
 	//cmd := exec.Command("/usr/bin/script", "-qfc", c)
-	cmd := exec.Command("/bin/bash", "-c", c)
+	// cmd := exec.Command("/bin/bash", "-c", c)
+	cmd := execCommand(c)
+
 	//cmd := exec.Command(sc.Command, args...)
 
 	if sc.Verbose {

@@ -43,7 +43,11 @@ func (w *Watcher) Walk(path string, info os.FileInfo, err error) error {
 		}
 		return nil
 	}
+
+	// if info.IsDir() {
 	return w.w.Add(path)
+	// }
+	// return nil
 }
 
 func (w *Watcher) Start(errors chan string) (filechanged chan string, err error) {
@@ -61,40 +65,54 @@ func (w *Watcher) Start(errors chan string) (filechanged chan string, err error)
 					//log.Println("event: (create:%v)", ev, ev.IsCreate())
 
 					if ev.Op&fsnotify.Create == fsnotify.Create {
-						println("created " + ev.Name)
 						w.Lock()
-						d, err := os.Stat(ev.Name)
-						if err == nil {
-							// w.Unlock()
-							// println("locked ")
-							println("add " + ev.Name)
-							if err := w.w.Add(ev.Name); err != nil {
-								// w.Unlock()
-								errors <- err.Error()
-							} else {
-								println("added " + ev.Name)
-							}
-
-							// println("unlocked ")
-							if !d.IsDir() {
-								filechanged <- ev.Name
-							}
+						n := ev.Name
+						// println("created " + n)
+						d, err := os.Stat(n)
+						if err != nil {
+							// println("error " + err.Error())
 							w.Unlock()
+							go func(e string) {
+								errors <- e
+							}(err.Error())
 						} else {
-							errors <- err.Error()
+							nm := d.Name()
+							if (w.match == nil || w.match.MatchString(nm)) && (w.ignore == nil || !w.ignore.MatchString(nm)) {
+								isDir := d.IsDir()
+								if err := w.w.Add(n); err != nil {
+									go func(e string) {
+										errors <- e
+									}(err.Error())
+								}
+								w.Unlock()
+								if !isDir {
+									go func(nn string) {
+										// println("changed " + nn)
+										filechanged <- nn
+									}(n)
+								}
+							} else {
+								w.Unlock()
+							}
 						}
 					}
 
-					if ev.Op&fsnotify.Remove == fsnotify.Remove {
-						// println("removed " + ev.Name)
-						// w.Lock()
-						w.w.Remove(ev.Name)
-						// w.Unlock()
-					}
-
+					/*
+						if ev.Op&fsnotify.Remove == fsnotify.Remove {
+							// println("removed " + ev.Name)
+							// w.Lock()
+							// w.w.Remove(ev.Name)
+							// w.Unlock()
+						}
+					*/
 					if ev.Op&fsnotify.Write == fsnotify.Write {
 						// println("written " + ev.Name)
-						filechanged <- ev.Name
+
+						go func(n string) {
+							// println("written " + n)
+							filechanged <- n
+						}(ev.Name)
+
 					}
 					/*
 						if ev.Op&fsnotify.Rename == fsnotify.Rename {
@@ -102,10 +120,15 @@ func (w *Watcher) Start(errors chan string) (filechanged chan string, err error)
 					*/
 
 				case err := <-w.w.Errors:
-					errors <- err.Error()
+
+					go func(e string) {
+						println("error " + e)
+						errors <- e
+					}(err.Error())
+
 					//ø.Notifier.Error("watcher error: " + err.Error())
 					// log.Println("watcher error:", err)
-				default:
+					// default:
 				}
 			}
 		}()

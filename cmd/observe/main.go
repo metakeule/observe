@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/metakeule/observe"
-	"github.com/metakeule/observe/shellcmd"
+	"github.com/metakeule/observe/shellcmd2"
 	"github.com/metakeule/observe/watcher"
 	"gopkg.in/fsnotify.v1"
 	"gopkg.in/metakeule/config.v1"
@@ -82,7 +82,7 @@ func main() {
 		ignore      *regexp.Regexp
 		filechanged chan string
 		errors      chan string
-		timeout     time.Duration
+		// timeout     time.Duration
 	)
 
 steps:
@@ -99,9 +99,10 @@ steps:
 		case 1:
 			dir, err = filepath.Abs(dir)
 		case 2:
-			timeout, err = time.ParseDuration(timeoutArg.Get())
+			// timeout, err = time.ParseDuration(timeoutArg.Get())
 		case 3:
-			obs, err = observe.New(&shellcmd.ShellCMD{Command: cmdArg.Get(), Verbose: verboseArg.Get()})
+			//obs, err = observe.New(&shellcmd.ShellCMD{Command: cmdArg.Get(), Verbose: verboseArg.Get()})
+			obs, err = observe.New(shellcmd2.NewShellProcess(dir, cmdArg.Get(), os.Stdout, os.Stderr, errors, time.Millisecond*100))
 		case 4:
 			obs.Skip = skipArg.Get()
 
@@ -145,41 +146,53 @@ steps:
 			signal.Notify(c, syscall.SIGTERM)
 			//signal.Notify(c, syscall.SIGHUP)
 			finished := make(chan bool, 1)
-			runFinished, stop, kill := obs.Start(printers, errors, finished, filechanged)
+			//runFinished, stop, kill := obs.Start(printers, errors, finished, filechanged)
 			// TODO: signal the execution of the observer to stop and exit after any running process is finished
 			// if interrupt CTRL+C is pressed for the second time, any running process is
 			// killed
 			var stopped bool
 			var stoppedMutex sync.RWMutex
-			for {
-				select {
-				case <-finished:
-					fmt.Fprintf(os.Stdout, "done\n")
-					os.Exit(0)
-				case <-c:
-					fmt.Fprintf(os.Stdout, "interupted, waiting for process to finish\n")
-					stoppedMutex.RLock()
-					st := stopped
-					stoppedMutex.RUnlock()
-					if st {
-						kill <- true
-						fmt.Fprintf(os.Stdout, "forced killing\n")
-					} else {
-						stoppedMutex.Lock()
-						stopped = true
-						stoppedMutex.Unlock()
-						stop <- timeout
-					}
-				case m := <-printers:
-					fmt.Fprintf(os.Stdout, "%s", m)
-				case e := <-errors:
-					fmt.Fprintf(os.Stderr, "%s", e)
-				case <-runFinished:
-					// printers <- fmt.Sprintf("\n--8<--8<--8<--8<--\n")
-				default:
-				}
+			// var stop, kill chan bool
+			stop, kill := obs.Start(filechanged, finished)
 
-			}
+			go func() {
+
+				for {
+					select {
+					// case <-finished:
+					// fmt.Fprintf(os.Stdout, "done\n")
+					// os.Exit(0)
+					case <-c:
+						fmt.Fprintf(os.Stdout, "interupted, waiting for process to finish\n")
+						stoppedMutex.RLock()
+						st := stopped
+						stoppedMutex.RUnlock()
+						if st {
+							// println("running kill")
+							kill <- true
+							fmt.Fprintf(os.Stdout, "forced killing\n")
+						} else {
+							stoppedMutex.Lock()
+							stopped = true
+							stoppedMutex.Unlock()
+							// println("running stop")
+							stop <- true // timeout
+						}
+					case m := <-printers:
+						fmt.Fprintf(os.Stdout, "%s", m)
+					case e := <-errors:
+						fmt.Fprintf(os.Stderr, "%s", e)
+						// case <-runFinished:
+						// printers <- fmt.Sprintf("\n--8<--8<--8<--8<--\n")
+						// default:
+					}
+
+				}
+			}()
+
+			<-finished
+			// fmt.Fprintf(os.Stdout, "done\n")
+			os.Exit(0)
 		}
 	}
 

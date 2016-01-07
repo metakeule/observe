@@ -176,6 +176,7 @@ steps:
 					fmt.Fprintf(os.Stderr, "%s", e)
 				case <-runFinished:
 					// printers <- fmt.Sprintf("\n--8<--8<--8<--8<--\n")
+				default:
 				}
 
 			}

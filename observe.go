@@ -1,39 +1,29 @@
 package observe
 
 import (
+	"time"
 
 	// "bytes"
 	"fmt"
 	"sync"
 )
 
-/*
-// Runner runs a program
-// TODO: externalize Watcher thingie, should also run inside own go routine
-type Runner interface {
-	// Run runs the given program and attaches stdout and stderr. It returns the running process
-	Run(program string, stdout, stderr io.Writer) (proc Process, err error)
-}
-*/
-
 // Process is a running program that can be terminated and kill
 // TODO: handle threadsafeness aka locking from outside the process
 type Process interface {
+
 	// Terminate ends the process, allowing it to properly shut down
-	Terminate() error
+	// If it doesn't terminate after the given timeout, it will be killed
+	Terminate(timeout time.Duration) error
+
 	// timeout time.Duration
 	// Kill forces the ending of the process
 	Kill() error
-	// get one from next everytime it is ready to consume the next file
+
+	// Loop gets one from next everytime it is ready to consume the next file
 	// if the next function returns an empty string, the execution must be skipped
 	Loop(next chan func() string)
 }
-
-/*
-case <-time.After(3 * time.Second):
- 			fmt.Println("timed out")
- 		}
-*/
 
 type ProcessInfo interface {
 	Info() string
@@ -48,7 +38,7 @@ type FakeProcess struct {
 }
 
 // Terminate does nothing
-func (f *FakeProcess) Terminate() error {
+func (f *FakeProcess) Terminate(timeout time.Duration) error {
 	f.Lock()
 	defer f.Unlock()
 	f.stopped = true
@@ -76,85 +66,61 @@ func (f *FakeProcess) Loop(next chan func() string) {
 	}
 }
 
-/*
-// RunnerFunc is a runner as a function
-type RunnerFunc func(file string, stdout, stderr io.Writer) (proc Process, err error)
-
-// Run calls the runner function
-func (rf RunnerFunc) Run(file string, stdout, stderr io.Writer) (proc Process, err error) {
-	return rf(file, stdout, stderr)
+type FuncProcess struct {
+	sync.Mutex
+	stopped bool
+	fn      func(file string)
 }
 
-// FuncCall is a runner that is running a function instead of a process.
-type FuncCall func(file string, stdout, stderr io.Writer) (err error)
-
-// Run calls the function.  The returned process is a FakeProcess
-func (fc FuncCall) Run(file string, stdout, stderr io.Writer) (proc Process, err error) {
-	proc = FakeProcess{}
-	err = fc(file, stdout, stderr)
-	return
-}
-*/
-
-type channelWriter struct {
-	ch chan string
+// Terminate does nothing
+func (f *FuncProcess) Terminate(timeout time.Duration) error {
+	f.Lock()
+	defer f.Unlock()
+	f.stopped = true
+	return nil
 }
 
-func (c *channelWriter) Write(b []byte) (int, error) {
-	// println("writing: " + string(b))
-	c.ch <- string(b)
-	return len(b), nil
+// Kill does nothing
+func (f *FuncProcess) Kill() error {
+	f.Lock()
+	defer f.Unlock()
+	f.stopped = true
+	return nil
+}
+
+func (f *FuncProcess) Loop(next chan func() string) {
+	for {
+		f.Lock()
+		stopped := f.stopped
+		f.Unlock()
+		if stopped {
+			break
+		}
+		n := <-next
+		path := n()
+		if path != "" {
+			f.fn(path)
+		}
+	}
 }
 
 type Observe struct {
-	Skip bool
-
-	//runner Runner
-
-	printers chan string
-	errors   chan string
-	stopped  bool
-
-	queueMutex   sync.Mutex
-	queueTrack   map[string]bool
-	queue        []string
-	queueLen     int
-	runFinished  chan bool
-	process      Process
-	stdout       *channelWriter
-	stderr       *channelWriter
-	cmdRunning   bool
-	runningMutex sync.RWMutex
+	errors     chan string
+	queueMutex sync.Mutex
+	queueTrack map[string]bool
+	process    Process
+	timeout    time.Duration
 }
 
-func New(proc Process) (*Observe, error) {
+func New(proc Process, timeout time.Duration) (*Observe, error) {
 	if proc == nil {
 		return nil, fmt.Errorf("missing proc is not allowed")
 	}
 	return &Observe{
 		process: proc,
+		timeout: timeout,
 	}, nil
 }
-
-/*
-func (o *Observe) setRunning() {
-	o.runningMutex.Lock()
-	defer o.runningMutex.Unlock()
-	o.cmdRunning = true
-}
-
-func (o *Observe) unsetRunning() {
-	o.runningMutex.Lock()
-	defer o.runningMutex.Unlock()
-	o.cmdRunning = false
-}
-
-func (o *Observe) IsRunning() bool {
-	o.runningMutex.RLock()
-	defer o.runningMutex.RUnlock()
-	return o.cmdRunning
-}
-*/
 
 // if the given file is already inside the queue, it is not added to the q
 func (o *Observe) addToQueue(file string) {
@@ -199,40 +165,8 @@ func (o *Observe) next(file string) func() string {
 	}
 }
 
-/*
-func (o *Observe) runFromQueue() {
-	if o.queueLen > 0 {
-		o.queueMutex.Lock()
-		file := o.queue[0]
-		if o.queueLen == 1 {
-			o.queue = []string{}
-			o.queueLen = 0
-		} else {
-			o.queue = o.queue[1:]
-			o.queueLen = len(o.queue)
-		}
-		delete(o.queueTrack, file)
-		o.queueMutex.Unlock()
-		o.run(file)
-	}
-}
-*/
-
-/*
-func (o *Observe) run(file string) (err error) {
-	// o.stdout.Reset()
-	// o.stderr.Reset()
-	o.setRunning()
-	o.process, err = o.runner.Run(file, o.stdout, o.stderr)
-	return err
-}
-*/
-
-//func (o *Observe) Start(printers, errors chan string, finished chan bool, filechanged <-chan string) (runFinished chan bool, stop chan time.Duration, kill chan bool) {
 // Start may only be called once
 func (o *Observe) Start(filechanged <-chan string, finished chan bool) (stop chan bool, kill chan bool) {
-	// println("start called")
-	// TODO: protect start assignments with mutext, or allow just one call of start per observer
 	next := make(chan func() string, 10000)
 
 	go func() {
@@ -240,81 +174,19 @@ func (o *Observe) Start(filechanged <-chan string, finished chan bool) (stop cha
 	}()
 
 	o.queueTrack = map[string]bool{}
-	// o.errors = errors
-	// o.printers = printers
-	// o.runFinished = make(chan bool)
-	// o.stderr = &channelWriter{errors}
-	// o.stdout = &channelWriter{printers}
 	stop = make(chan bool)
 	kill = make(chan bool)
-	// runFinished = o.runFinished // make(chan bool, 1)
 	go func() {
 		for {
 			select {
-			/*
-				case timeout := <-stop:
-					// println("<-stop")
-					o.stopped = true
-
-					if !o.IsRunning() {
-						finished <- true
-						// println("is not running")
-						return
-					}
-
-					// println("terminating")
-					term := o.process.Terminate(timeout)
-					err := <-term
-					if err == nil {
-						o.unsetRunning()
-						finished <- true
-						return
-					}
-
-					o.errors <- err.Error()
-					go func() {
-						//o.printers <- fmt.Sprintf("try to kill PID %v", o.process.Pid)
-						kill <- true
-					}()
-			*/
 			case <-stop:
-				// println("stopped")
-				err := o.process.Terminate()
-				if err != nil {
-					o.process.Kill()
-				}
+				o.process.Terminate(o.timeout)
 				finished <- true
 				break
 			case <-kill:
-				// println("killed")
 				o.process.Kill()
 				finished <- true
 				break
-				// println("<-kill")
-				/*
-					if o.IsRunning() {
-						if err := o.process.Kill(); err == nil {
-							o.unsetRunning()
-							finished <- true
-							return
-						}
-					}
-				*/
-				// return
-				/*
-					case <-o.runFinished:
-						// println("runFinished")
-						runFinished <- true
-						if !o.stopped && !o.Skip {
-							o.runFromQueue()
-						} else {
-							if o.stopped && o.IsRunning() {
-								o.unsetRunning()
-								finished <- true
-								return
-							}
-						}
-				*/
 			case f := <-filechanged:
 				o.addToQueue(f)
 				// here is all the meat:
@@ -327,41 +199,8 @@ func (o *Observe) Start(filechanged <-chan string, finished chan bool) (stop cha
 				// since we break the loop on stop and kill, there is no need to take care of next
 				// wrt to stopped processes
 				next <- o.next(f)
-
-				/*
-					// println("<-filechanged")
-					if !o.stopped {
-						//go func() {
-
-						//}
-						// println("call runner")
-						err := o.run(f)
-						if err == nil {
-							var success bool
-							success, err = o.process.Wait()
-							if err == nil {
-								o.unsetRunning()
-								if !success {
-									if pinf, ok := o.process.(ProcessInfo); ok {
-										errors <- fmt.Sprintf("process %s with file %s did not finish sucessfully", pinf.Info(), f)
-									} else {
-										errors <- fmt.Sprintf("process with file %s did not finish sucessfully", f)
-									}
-
-								}
-								// println("success", success)
-								o.runFinished <- true
-							}
-						}
-						// _ = err
-					}
-				*/
-				// default:
 			}
-
 		}
 	}()
-
-	//}()
 	return
 }

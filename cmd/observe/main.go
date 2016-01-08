@@ -41,10 +41,11 @@ var (
 		"ignore directories based on the given regular expression (posix)",
 		config.Default(""), config.Shortflag('i'))
 
-	skipArg = args.NewBool("skip",
-		"skip next execution, if the command is still running, default is to delay the execution",
-		config.Shortflag('s'))
-
+	/*
+		skipArg = args.NewBool("skip",
+			"skip next execution, if the command is still running, default is to delay the execution",
+			config.Shortflag('s'))
+	*/
 	verboseArg = args.NewBool("verbose",
 		"show the command that is being run",
 		config.Shortflag('v'), config.Default(true))
@@ -63,8 +64,11 @@ var (
 	*/
 
 	timeoutArg = args.NewString("timeout",
-		"timeout command termination when pressing CTRL+c once, you need a suffix to indicate the unit (see https://golang.org/pkg/time/#ParseDuration), e.g. \n10ms\n2s\n2h45m",
+		"timeout for command termination when pressing CTRL+c once, you need a suffix to indicate the unit (see https://golang.org/pkg/time/#ParseDuration), e.g. \n10ms\n2s\n2h45m",
 		config.Shortflag('t'), config.Default("800ms"))
+	sleepArg = args.NewString("sleep",
+		"time between calls of the command, you need a suffix to indicate the unit (see https://golang.org/pkg/time/#ParseDuration), e.g. \n10ms\n2s\n2h45m",
+		config.Default("1000ms"))
 )
 
 func main() {
@@ -82,7 +86,8 @@ func main() {
 		ignore      *regexp.Regexp
 		filechanged chan string
 		errors      chan string
-		// timeout     time.Duration
+		timeout     time.Duration
+		sleep       time.Duration
 	)
 
 steps:
@@ -99,13 +104,15 @@ steps:
 		case 1:
 			dir, err = filepath.Abs(dir)
 		case 2:
-			// timeout, err = time.ParseDuration(timeoutArg.Get())
+			timeout, err = time.ParseDuration(timeoutArg.Get())
 		case 3:
-			//obs, err = observe.New(&shellcmd.ShellCMD{Command: cmdArg.Get(), Verbose: verboseArg.Get()})
-			obs, err = observe.New(shellcmd2.NewShellProcess(dir, cmdArg.Get(), os.Stdout, os.Stderr, errors, time.Millisecond*100))
+			sleep, err = time.ParseDuration(sleepArg.Get())
 		case 4:
-			obs.Skip = skipArg.Get()
-
+			//obs, err = observe.New(&shellcmd.ShellCMD{Command: cmdArg.Get(), Verbose: verboseArg.Get()})
+			proc := shellcmd2.NewShellProcess(dir, cmdArg.Get(), os.Stdout, os.Stderr, errors, sleep)
+			obs, err = observe.New(proc, timeout)
+		case 5:
+			// obs.Skip = skipArg.Get()
 			switch m := matchArg.Get(); m {
 			case "", "*":
 			default:
@@ -116,8 +123,7 @@ steps:
 				}
 
 			}
-
-		case 5:
+		case 6:
 			switch i := ignoreArg.Get(); i {
 			case "":
 			default:
@@ -127,18 +133,18 @@ steps:
 					ignore, err = regexp.CompilePOSIX(i)
 				}
 			}
-		case 6:
-			w, err = fsnotify.NewWatcher()
 		case 7:
-			watch, err = watcher.New(w, dir, match, ignore)
+			w, err = fsnotify.NewWatcher()
 		case 8:
+			watch, err = watcher.New(w, dir, match, ignore)
+		case 9:
 			//	watch.Recursive = recursiveArg.Get()
 			//	watch.NoCreated = noCreatedArg.Get()
 			//	watch.NoRemoved = noRemovedArg.Get()
 			//	watch.NoUpdated = noUpdatedArg.Get()
 			errors = make(chan string, 1)
 			filechanged, err = watch.Start(errors)
-		case 9:
+		case 10:
 			printers := make(chan string, 1)
 
 			c := make(chan os.Signal, 1)

@@ -1,6 +1,7 @@
 package shellcmd2
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -47,19 +48,44 @@ func (s *shellProcess) Kill() error {
 	return err
 }
 
-func (s *shellProcess) Terminate() error {
+// tries to terminate process and kills it after timeout and if it does not exit properly
+func (s *shellProcess) Terminate(timeout time.Duration) error {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 	s.stopped = true
 	if s.process == nil {
 		return nil
 	}
+	st := make(chan *os.ProcessState)
+	terminator := make(chan error)
 	err := s.process.Signal(syscall.SIGTERM)
-	state, _ := s.process.Wait()
-	if state.Exited() {
-		s.process = nil
+
+	if err != nil {
+		return s.Kill()
 	}
-	return err
+
+	go func() {
+		state, _ := s.process.Wait()
+		st <- state
+	}()
+
+	for {
+		select {
+		case s := <-st:
+			if !s.Exited() {
+				terminator <- fmt.Errorf("does not exit %v", s.Pid())
+			} else {
+				terminator <- nil
+			}
+			break
+		case <-time.After(timeout):
+			terminator <- s.Kill()
+			break
+			// do we need default: here? test it with timeout
+		}
+	}
+	s.process = nil
+	return <-terminator
 }
 
 // run is blocking
@@ -69,8 +95,6 @@ func (s *shellProcess) run(file string) (err error) {
 	c := strings.Replace(s.Command, "$file", file, -1)
 	c = strings.Replace(c, "$wd", s.watchDir, -1)
 
-	//cmd := exec.Command("/usr/bin/script", "-qfc", c)
-	// cmd := exec.Command("/bin/bash", "-c", c)
 	cmd := execCommand(c)
 	cmd.Stderr = s.stderr
 	cmd.Stdout = s.stdout
@@ -78,9 +102,6 @@ func (s *shellProcess) run(file string) (err error) {
 
 	if err != nil {
 		s.process = nil
-		// fmt.Fprintln(stderr, err.Error())
-		//		o.errorf(err.Error())
-		// o.unsetRunning()
 		return
 	}
 

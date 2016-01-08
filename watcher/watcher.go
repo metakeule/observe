@@ -44,16 +44,12 @@ func (w *Watcher) Walk(path string, info os.FileInfo, err error) error {
 		return nil
 	}
 
-	// if info.IsDir() {
 	return w.w.Add(path)
-	// }
-	// return nil
 }
 
 func (w *Watcher) Start(errors chan string) (filechanged chan string, err error) {
 
 	filechanged = make(chan string, 100)
-	//filechanged = make(chan string)
 	err = filepath.Walk(w.dir, w.Walk)
 
 	if err == nil {
@@ -62,15 +58,11 @@ func (w *Watcher) Start(errors chan string) (filechanged chan string, err error)
 			for {
 				select {
 				case ev := <-w.w.Events:
-					//log.Println("event: (create:%v)", ev, ev.IsCreate())
-
 					if ev.Op&fsnotify.Create == fsnotify.Create {
 						w.Lock()
 						n := ev.Name
-						// println("created " + n)
 						d, err := os.Stat(n)
 						if err != nil {
-							// println("error " + err.Error())
 							w.Unlock()
 							go func(e string) {
 								errors <- e
@@ -87,7 +79,6 @@ func (w *Watcher) Start(errors chan string) (filechanged chan string, err error)
 								w.Unlock()
 								if !isDir {
 									go func(nn string) {
-										// println("changed " + nn)
 										filechanged <- nn
 									}(n)
 								}
@@ -97,38 +88,16 @@ func (w *Watcher) Start(errors chan string) (filechanged chan string, err error)
 						}
 					}
 
-					/*
-						if ev.Op&fsnotify.Remove == fsnotify.Remove {
-							// println("removed " + ev.Name)
-							// w.Lock()
-							// w.w.Remove(ev.Name)
-							// w.Unlock()
-						}
-					*/
 					if ev.Op&fsnotify.Write == fsnotify.Write {
-						// println("written " + ev.Name)
-
 						go func(n string) {
-							// println("written " + n)
 							filechanged <- n
 						}(ev.Name)
-
 					}
-					/*
-						if ev.Op&fsnotify.Rename == fsnotify.Rename {
-						}
-					*/
-
 				case err := <-w.w.Errors:
-
 					go func(e string) {
 						println("error " + e)
 						errors <- e
 					}(err.Error())
-
-					//ø.Notifier.Error("watcher error: " + err.Error())
-					// log.Println("watcher error:", err)
-					// default:
 				}
 			}
 		}()

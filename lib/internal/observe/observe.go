@@ -1,11 +1,9 @@
 package observe
 
 import (
-	"time"
-
-	// "bytes"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // Process is a running program that can be terminated and kill

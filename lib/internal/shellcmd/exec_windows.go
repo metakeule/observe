@@ -1,4 +1,4 @@
-package shellcmd2
+package shellcmd
 
 import (
 	"os/exec"

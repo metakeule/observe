@@ -1,4 +1,4 @@
-package shellcmd2
+package shellcmd
 
 import (
 	"fmt"
@@ -16,7 +16,7 @@ type shellProcess struct {
 	stopped  bool
 	mx       sync.RWMutex
 	watchDir string
-	Command  string
+	command  string
 	stdout   io.Writer
 	stderr   io.Writer
 	errors   chan string
@@ -26,7 +26,7 @@ type shellProcess struct {
 func NewShellProcess(watchDir, cmd string, stdout, stderr io.Writer, errors chan string, sleep time.Duration) *shellProcess {
 	return &shellProcess{
 		watchDir: watchDir,
-		Command:  cmd,
+		command:  cmd,
 		stdout:   stdout,
 		stderr:   stderr,
 		errors:   errors,
@@ -92,8 +92,8 @@ func (s *shellProcess) Terminate(timeout time.Duration) error {
 func (s *shellProcess) run(file string) (err error) {
 	s.mx.Lock()
 	defer s.mx.Unlock()
-	c := strings.Replace(s.Command, "$file", file, -1)
-	c = strings.Replace(c, "$wd", s.watchDir, -1)
+	c := strings.Replace(s.command, "$_file", file, -1)
+	c = strings.Replace(c, "$_wd", s.watchDir, -1)
 
 	cmd := execCommand(c)
 	cmd.Stderr = s.stderr

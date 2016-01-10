@@ -83,7 +83,7 @@ func (w *Watcher) walk(path string, info os.FileInfo, err error) error {
 
 // Run runs the watching loop, reporting any errors to the errors channel, file modification and
 // creation to the filechanged channel and file deletion and file renaming to the dirchanged channel
-func (w *Watcher) Run(filechanged chan<- string, dirchanged chan<- bool, errors chan<- string) {
+func (w *Watcher) Run(filechanged chan<- string, dirchanged chan<- bool, errors chan<- error) {
 
 	go func() {
 		for {
@@ -95,9 +95,9 @@ func (w *Watcher) Run(filechanged chan<- string, dirchanged chan<- bool, errors 
 					d, err := os.Stat(n)
 					if err != nil {
 						w.Unlock()
-						go func(e string) {
+						go func(e error) {
 							errors <- e
-						}(err.Error())
+						}(err)
 					} else {
 						nm := d.Name()
 						if w.shouldIgnore(nm) {
@@ -108,9 +108,9 @@ func (w *Watcher) Run(filechanged chan<- string, dirchanged chan<- bool, errors 
 								w.Unlock()
 							} else {
 								if err := w.w.Add(n); err != nil {
-									go func(e string) {
+									go func(e error) {
 										errors <- e
-									}(err.Error())
+									}(err)
 								}
 								w.Unlock()
 								if !isDir {
@@ -143,10 +143,9 @@ func (w *Watcher) Run(filechanged chan<- string, dirchanged chan<- bool, errors 
 					}()
 				}
 			case err := <-w.w.Errors:
-				go func(e string) {
-					// println("error " + e)
+				go func(e error) {
 					errors <- e
-				}(err.Error())
+				}(err)
 			}
 		}
 	}()

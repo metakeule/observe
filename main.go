@@ -38,9 +38,9 @@ var (
 		"ignore directories based on the given regular expression (posix)",
 		config.Default(""), config.Shortflag('i'))
 
-	verboseArg = args.NewBool("verbose",
-		"show the command that is being run",
-		config.Shortflag('v'), config.Default(true))
+	//	verboseArg = args.NewBool("verbose",
+	//		"show the command that is being run",
+	//		config.Shortflag('v'), config.Default(true))
 
 	timeoutArg = args.NewString("timeout",
 		"timeout for command termination when pressing CTRL+c once, you need a suffix to indicate the unit (see https://golang.org/pkg/time/#ParseDuration), e.g. \n10ms\n2s\n2h45m",
@@ -68,7 +68,7 @@ func main() {
 		ignore  *regexp.Regexp
 		timeout time.Duration
 		sleep   time.Duration
-		errors  chan string
+		errors  chan error
 	)
 
 steps:
@@ -119,7 +119,7 @@ steps:
 				runcommand.Stderr(os.Stderr),
 			)
 
-			errors = make(chan string, 1)
+			errors = make(chan error, 1)
 			stopper, err = rc.Run(errors)
 		case 7:
 			var (
@@ -138,13 +138,13 @@ steps:
 				for {
 					select {
 					case <-c:
-						fmt.Fprintf(os.Stdout, "\ninterupted, waiting for process to finish...")
+						fmt.Fprintf(os.Stderr, "\ninterupted, waiting for process to finish...")
 						stoppedMutex.RLock()
 						st := stopped
 						stoppedMutex.RUnlock()
 						if st {
 							stopper.Kill()
-							fmt.Fprintf(os.Stdout, "\nforced killing...")
+							fmt.Fprintf(os.Stderr, "\nforced killing...")
 							finished <- true
 						} else {
 							stoppedMutex.Lock()
@@ -157,7 +157,7 @@ steps:
 							finished <- true
 						}
 					case e := <-errors:
-						fmt.Fprintf(os.Stderr, "%s", e)
+						fmt.Fprintf(os.Stderr, "Error(%T): %s", e, e)
 					}
 				}
 			}()
@@ -170,7 +170,7 @@ steps:
 
 	// use err here
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+		fmt.Fprintf(os.Stderr, "Error(%T): %s\n", err, err)
 	}
 
 }

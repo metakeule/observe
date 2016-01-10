@@ -110,7 +110,7 @@ func New(watchDir, runCmd string, configs ...Config) *RunCommand {
 // If the watcher or the observer could not be initialized properly,
 // an error is returned. Otherwise the returned Stoppable can be used to
 // terminate and kill the running process and end the observation
-func (rc *RunCommand) Run(errors chan string) (Stoppable, error) {
+func (rc *RunCommand) Run(errors chan error) (Stoppable, error) {
 	filechanged := make(chan string, rc.bufSize)
 	dirchanged := make(chan bool, rc.bufSize)
 

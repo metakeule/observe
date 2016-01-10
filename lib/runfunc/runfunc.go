@@ -3,16 +3,13 @@ package runfunc
 import (
 	"github.com/metakeule/observe/lib/internal/observer"
 	"github.com/metakeule/observe/lib/internal/watcher"
-	"io"
-	"os"
 	"regexp"
 	"time"
 )
 
 type funcProcess struct {
-	fn     func(dir, file string, w io.Writer) error
-	stdout io.Writer
-	errors chan string
+	fn     func(dir, file string) error
+	errors chan error
 	dir    string
 }
 
@@ -27,9 +24,9 @@ func (f *funcProcess) Kill() error {
 }
 
 func (f *funcProcess) Run(file string) {
-	err := f.fn(f.dir, file, f.stdout)
+	err := f.fn(f.dir, file)
 	if err != nil {
-		f.errors <- err.Error()
+		f.errors <- err
 	}
 }
 
@@ -39,8 +36,7 @@ type Stoppable interface {
 }
 
 type RunFunc struct {
-	fn         func(dir, file string, w io.Writer) error
-	stdout     io.Writer
+	fn         func(dir, file string) error
 	dir        string
 	matchFiles *regexp.Regexp
 	ignore     *regexp.Regexp
@@ -51,12 +47,6 @@ type RunFunc struct {
 const DefaultBufSize = 10000
 
 type Config func(*RunFunc)
-
-func Stdout(stdout io.Writer) Config {
-	return func(rc *RunFunc) {
-		rc.stdout = stdout
-	}
-}
 
 func BufSize(bfsize int) Config {
 	return func(rc *RunFunc) {
@@ -88,12 +78,11 @@ func Sleep(s time.Duration) Config {
 // When calling fn, dir will be the path of watchDir and file will be the file path of the file that was
 // created/modified. If file is the empty string, a file has been removed or renamed.
 // Optional Configs are
-// Stdout(): setting the out Writer that is passed to fn (default: os.Stdout)
 // BufSize(): setting the buffer size of the reporting channels (default: DefaultBufSize)
 // Ignore(): setting the regular expression to which matching files and directories are ignored (default: nil; ignore nothing)
 // MatchFiles(): setting the regular expression to which file must match in order to be tracked (default: nil; all files match)
 // Sleep(): setting the duration of sleeping time of two invocations of fn (default: 0; no sleeping time)
-func New(watchDir string, fn func(dir, file string, out io.Writer) error, configs ...Config) *RunFunc {
+func New(watchDir string, fn func(dir, file string) error, configs ...Config) *RunFunc {
 	rc := &RunFunc{
 		fn:  fn,
 		dir: watchDir,
@@ -101,10 +90,6 @@ func New(watchDir string, fn func(dir, file string, out io.Writer) error, config
 
 	for _, c := range configs {
 		c(rc)
-	}
-
-	if rc.stdout == nil {
-		rc.stdout = os.Stdout
 	}
 
 	if rc.bufSize == 0 {
@@ -120,7 +105,7 @@ func New(watchDir string, fn func(dir, file string, out io.Writer) error, config
 // If the watcher or the observer could not be initialized properly,
 // an error is returned. Otherwise the returned Stoppable can be used to
 // terminate and kill the running process and end the observation
-func (rc *RunFunc) Run(errors chan string) (Stoppable, error) {
+func (rc *RunFunc) Run(errors chan error) (Stoppable, error) {
 	filechanged := make(chan string, rc.bufSize)
 	dirchanged := make(chan bool, rc.bufSize)
 
@@ -131,7 +116,6 @@ func (rc *RunFunc) Run(errors chan string) (Stoppable, error) {
 
 	proc := &funcProcess{
 		fn:     rc.fn,
-		stdout: rc.stdout,
 		errors: errors,
 		dir:    rc.dir,
 	}

@@ -2,10 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/metakeule/observe/lib/internal/observe"
-	"github.com/metakeule/observe/lib/internal/shellcmd"
-	"github.com/metakeule/observe/lib/internal/watcher"
-	"gopkg.in/fsnotify.v1"
+	"github.com/metakeule/observe/lib/runcommand"
 	"gopkg.in/metakeule/config.v1"
 	"os"
 	"os/signal"
@@ -52,6 +49,10 @@ var (
 	sleepArg = args.NewString("sleep",
 		"time between calls of the command, you need a suffix to indicate the unit (see https://golang.org/pkg/time/#ParseDuration), e.g. \n10ms\n2s\n2h45m",
 		config.Default("1000ms"))
+
+	bufSizeArg = args.NewInt32("bufsize", "the size of the message buffer for changed files and changed directories",
+		config.Default(int32(runcommand.DefaultBufSize)),
+	)
 )
 
 func main() {
@@ -60,17 +61,14 @@ func main() {
 		// define the variables here that are shared along the steps
 		// most variables should only by defined by the type here
 		// and are assigned inside the steps
-		err         = args.Run()
-		obs         *observe.Observe
-		watch       *watcher.Watcher
-		w           *fsnotify.Watcher
-		dir         string
-		match       *regexp.Regexp
-		ignore      *regexp.Regexp
-		filechanged chan string
-		errors      chan string
-		timeout     time.Duration
-		sleep       time.Duration
+		err     = args.Run()
+		stopper runcommand.Stoppable
+		dir     string
+		match   *regexp.Regexp
+		ignore  *regexp.Regexp
+		timeout time.Duration
+		sleep   time.Duration
+		errors  chan string
 	)
 
 steps:
@@ -91,9 +89,6 @@ steps:
 		case 3:
 			sleep, err = time.ParseDuration(sleepArg.Get())
 		case 4:
-			proc := shellcmd.NewShellProcess(dir, cmdArg.Get(), os.Stdout, os.Stderr, errors, sleep)
-			obs, err = observe.New(proc, timeout)
-		case 5:
 			switch m := matchArg.Get(); m {
 			case "", "*":
 			default:
@@ -104,7 +99,7 @@ steps:
 				}
 
 			}
-		case 6:
+		case 5:
 			switch i := ignoreArg.Get(); i {
 			case "":
 			default:
@@ -114,57 +109,61 @@ steps:
 					ignore, err = regexp.CompilePOSIX(i)
 				}
 			}
-		case 7:
-			w, err = fsnotify.NewWatcher()
-		case 8:
-			watch, err = watcher.New(w, dir, match, ignore)
-		case 9:
-			errors = make(chan string, 1)
-			filechanged, err = watch.Start(errors)
-		case 10:
-			printers := make(chan string, 1)
+		case 6:
+			rc := runcommand.New(dir, cmdArg.Get(),
+				runcommand.BufSize(int(bufSizeArg.Get())),
+				runcommand.Ignore(ignore),
+				runcommand.MatchFiles(match),
+				runcommand.Sleep(sleep),
+				runcommand.Stdout(os.Stdout),
+				runcommand.Stderr(os.Stderr),
+			)
 
-			c := make(chan os.Signal, 1)
-			signal.Notify(c, os.Interrupt)
-			signal.Notify(c, syscall.SIGTERM)
-			finished := make(chan bool, 1)
+			errors = make(chan string, 1)
+			stopper, err = rc.Run(errors)
+		case 7:
+			var (
+				stopped      bool
+				stoppedMutex sync.RWMutex
+				finished     = make(chan bool, 1)
+				c            = make(chan os.Signal, 1)
+			)
 
 			// signal the execution of the observer to stop and exit after any running process is finished
 			// if interrupt CTRL+C is pressed for the second time, any running process is
 			// killed
-			var stopped bool
-			var stoppedMutex sync.RWMutex
-			// var stop, kill chan bool
-			stop, kill := obs.Start(filechanged, finished)
-
+			signal.Notify(c, os.Interrupt)
+			signal.Notify(c, syscall.SIGTERM)
 			go func() {
-
 				for {
 					select {
 					case <-c:
-						fmt.Fprintf(os.Stdout, "interupted, waiting for process to finish\n")
+						fmt.Fprintf(os.Stdout, "\ninterupted, waiting for process to finish...")
 						stoppedMutex.RLock()
 						st := stopped
 						stoppedMutex.RUnlock()
 						if st {
-							kill <- true
-							fmt.Fprintf(os.Stdout, "forced killing\n")
+							stopper.Kill()
+							fmt.Fprintf(os.Stdout, "\nforced killing...")
+							finished <- true
 						} else {
 							stoppedMutex.Lock()
 							stopped = true
 							stoppedMutex.Unlock()
-							stop <- true // timeout
+							errTerm := stopper.Terminate(timeout)
+							if errTerm != nil {
+								stopper.Kill()
+							}
+							finished <- true
 						}
-					case m := <-printers:
-						fmt.Fprintf(os.Stdout, "%s", m)
 					case e := <-errors:
 						fmt.Fprintf(os.Stderr, "%s", e)
 					}
-
 				}
 			}()
 
 			<-finished
+			fmt.Fprintf(os.Stderr, "done\n")
 			os.Exit(0)
 		}
 	}

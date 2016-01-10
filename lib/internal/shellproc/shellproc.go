@@ -1,7 +1,6 @@
 package shellproc
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,7 +24,6 @@ func New(stdout, stderr io.Writer) *ShellProc {
 
 // since Kill, Terminate and Run are guaranteed (by observe) to never be called at the same time
 // we don't have to care about concurrency here
-
 func (s *ShellProc) Kill() error {
 	if s.process == nil {
 		return nil
@@ -36,7 +34,6 @@ func (s *ShellProc) Kill() error {
 
 // tries to terminate process and kills it after timeout and if it does not exit properly
 func (s *ShellProc) Terminate(timeout time.Duration) error {
-	fmt.Println("in proc terminate called")
 	if s.process == nil {
 		return nil
 	}
@@ -48,8 +45,7 @@ func (s *ShellProc) Terminate(timeout time.Duration) error {
 		return s.Kill()
 	}
 
-	fmt.Println("starting go routines")
-	// run the syscall in a separate gorountine not to block the main thread
+	// run the syscall in a separate goroutine not to block the main thread
 	go func() {
 		for {
 			select {
@@ -63,26 +59,22 @@ func (s *ShellProc) Terminate(timeout time.Duration) error {
 				break
 			case <-time.After(timeout):
 				s.process = nil
-				terminator <- errors.New("timeout")
-				// terminator <- s.Kill()
+				//terminator <- errors.New("timeout")
+				terminator <- s.Kill()
 				break
 				// do we need default: here? test it with timeout
 			}
 		}
 	}()
 
-	fmt.Println("waiting for proc to finish")
-
 	state, _ := s.process.Wait()
 	st <- state
-	fmt.Println("waiting for termination")
 
 	return <-terminator
 }
 
 // run is blocking
 func (s *ShellProc) Run(command string) {
-
 	cmd := execCommand(command)
 	cmd.Stderr = s.stderr
 	cmd.Stdout = s.stdout

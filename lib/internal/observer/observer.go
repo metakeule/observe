@@ -8,9 +8,7 @@ import (
 )
 
 // Process is a running program that can be terminated and kill
-// TODO: handle threadsafeness aka locking from outside the process
 type Process interface {
-
 	// Terminate ends the process, allowing it to properly shut down
 	// If it doesn't terminate after the given timeout, it will be killed
 	Terminate(timeout time.Duration) error
@@ -19,92 +17,9 @@ type Process interface {
 	// Kill forces the ending of the process
 	Kill() error
 
-	// IsStopped() bool
-
-	// Run runs the command string
+	// Run runs the command string. There will be no two calls of Run at the same time
 	Run(cmd string)
-
-	// Loop gets one from next everytime it is ready to consume the next file
-	// if the next function returns an empty string, the execution must be skipped
-	// Loop(next chan func() string)
 }
-
-/*
-// FakeProcess is a process that is doing nothing
-// The value of FakeProcess is the running state
-// Terminate and Kill methods do nothing
-type FakeProcess struct {
-	sync.Mutex
-	stopped bool
-}
-
-// Terminate does nothing
-func (f *FakeProcess) Terminate(timeout time.Duration) error {
-	f.Lock()
-	defer f.Unlock()
-	f.stopped = true
-	return nil
-}
-
-// Kill does nothing
-func (f *FakeProcess) Kill() error {
-	f.Lock()
-	defer f.Unlock()
-	f.stopped = true
-	return nil
-}
-
-func (f *FakeProcess) Loop(next chan func() string) {
-	for {
-		f.Lock()
-		stopped := f.stopped
-		f.Unlock()
-		if stopped {
-			break
-		}
-		n := <-next
-		n()
-	}
-}
-
-type FuncProcess struct {
-	sync.Mutex
-	stopped bool
-	fn      func(file string)
-}
-
-// Terminate does nothing
-func (f *FuncProcess) Terminate(timeout time.Duration) error {
-	f.Lock()
-	defer f.Unlock()
-	f.stopped = true
-	return nil
-}
-
-// Kill does nothing
-func (f *FuncProcess) Kill() error {
-	f.Lock()
-	defer f.Unlock()
-	f.stopped = true
-	return nil
-}
-
-func (f *FuncProcess) Loop(next chan func() string) {
-	for {
-		f.Lock()
-		stopped := f.stopped
-		f.Unlock()
-		if stopped {
-			break
-		}
-		n := <-next
-		path := n()
-		if path != "" {
-			f.fn(path)
-		}
-	}
-}
-*/
 
 // Observer should be used to run and terminate the processes
 // it guarantees that just one process is running at the same time
@@ -129,10 +44,9 @@ func New(command string, watchDir string, proc Process, bufSize int) (*Observer,
 	return &Observer{
 		ReportRemoved: !strings.Contains(command, "$_file"),
 		process:       proc,
-		//timeout:  timeout,
-		command:  command,
-		watchDir: watchDir,
-		bufSize:  bufSize,
+		command:       command,
+		watchDir:      watchDir,
+		bufSize:       bufSize,
 	}, nil
 }
 
@@ -140,69 +54,30 @@ func New(command string, watchDir string, proc Process, bufSize int) (*Observer,
 func (o *Observer) addToQueue(file string) {
 	o.queueMutex.Lock()
 	defer o.queueMutex.Unlock()
-	/*
-		if !o.ReportRemoved {
-			o.queueTrack[""] = true
-			return
-		}
-	*/
 
 	if !o.queueTrack[file] {
 		o.queueTrack[file] = true
-		//	o.queue = append(o.queue, file)
-		//	o.queueLen = len(o.queue)
 	}
 }
-
-/*
-func (o *Observer) removeFromQueue(file string) {
-	o.queueMutex.Lock()
-	defer o.queueMutex.Unlock()
-	if !o.ReportRemoved {
-		delete(o.queueTrack, "")
-		return
-	}
-	delete(o.queueTrack, file)
-}
-*/
 
 // next returns a closure over the queue, so that
 // when the process is ready to run the next time
 // it can call the func to get the filename
 // if the filename is empty, this means, that is has already
 // been processed in the meantime
-func (o *Observer) next(file string) func() (has bool, file string) {
-	// println("create closure for " + file)
+func (o *Observer) next(file string) func() (proceed bool, file string) {
 	return func() (bool, string) {
-		// println("looking up " + file)
 		o.queueMutex.Lock()
-		/*
-			if !o.ReportRemoved {
-				file = ""
-			}
-		*/
-		_, has := o.queueTrack[file]
-		//fmt.Printf("looking up %#v, has: %v\n", file, has)
-		if has {
+
+		_, proceed := o.queueTrack[file]
+
+		if proceed {
 			// remove the file, since we will proceed now
 			delete(o.queueTrack, file)
 		}
 		o.queueMutex.Unlock()
-		// if the file has already been processed, return empty string to indicate:
-		// do no run the proc
-		/*
-			if !has {
-				return "-"
-			}
-		*/
 
-		/*
-			if !o.ReportRemoved {
-				file = "run"
-			}
-		*/
-		// file was not processed in the meantime, so return it, that it can be processed
-		return has, file
+		return proceed, file
 	}
 }
 
@@ -220,6 +95,7 @@ func (o *Observer) Kill() error {
 func (o *Observer) Terminate(timeout time.Duration) error {
 	o.procMutex.Lock()
 	if o.procStopped {
+		o.procMutex.Unlock()
 		return nil
 	}
 	o.procStopped = true
@@ -235,21 +111,22 @@ func (o *Observer) Run(filechanged <-chan string, dirchanged <-chan bool, sleep 
 	go func() {
 		// blocking until we get something new
 		for fn := range next {
-			if sleep > 0 {
-				time.Sleep(sleep)
-			}
-			has, file := fn()
-
-			// println("command got " + file)
-			// file was already processed, so skip and wait for the next
-			if !has {
-				continue
-			}
 			o.procMutex.RLock()
 			stopped := o.procStopped
 			o.procMutex.RUnlock()
 			if stopped {
 				break
+			}
+
+			if sleep > 0 {
+				time.Sleep(sleep)
+			}
+
+			proceed, file := fn()
+
+			// file was already processed, so skip and wait for the next
+			if !proceed {
+				continue
 			}
 
 			c := strings.Replace(o.command, "$_file", file, -1)

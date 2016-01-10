@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+// TODO: write docs and tests and test it on windows
+
 var (
 	args = config.MustNew("observe", "0.0.1",
 		"observe runs a command when the content of a directory changes")
@@ -37,10 +39,6 @@ var (
 	ignoreArg = args.NewString("ignore",
 		"ignore directories based on the given regular expression (posix)",
 		config.Default(""), config.Shortflag('i'))
-
-	//	verboseArg = args.NewBool("verbose",
-	//		"show the command that is being run",
-	//		config.Shortflag('v'), config.Default(true))
 
 	timeoutArg = args.NewString("timeout",
 		"timeout for command termination when pressing CTRL+c once, you need a suffix to indicate the unit (see https://golang.org/pkg/time/#ParseDuration), e.g. \n10ms\n2s\n2h45m",

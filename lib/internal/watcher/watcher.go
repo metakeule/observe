@@ -83,7 +83,9 @@ func (w *Watcher) walk(path string, info os.FileInfo, err error) error {
 
 // Run runs the watching loop, reporting any errors to the errors channel, file modification and
 // creation to the filechanged channel and file deletion and file renaming to the dirchanged channel
-func (w *Watcher) Run(filechanged chan<- string, dirchanged chan<- bool, errors chan<- error) {
+// for removal and renamed files, an empty filename is added to filechanged, since the command could
+// not do anything meaningful with the missing file.
+func (w *Watcher) Run(filechanged chan<- string, errors chan<- error) {
 
 	go func() {
 		for {
@@ -98,29 +100,30 @@ func (w *Watcher) Run(filechanged chan<- string, dirchanged chan<- bool, errors 
 						go func(e error) {
 							errors <- e
 						}(err)
-					} else {
-						nm := d.Name()
-						if w.shouldIgnore(nm) {
-							w.Unlock()
-						} else {
-							isDir := d.IsDir()
-							if !isDir && w.fileMatch(nm) {
-								w.Unlock()
-							} else {
-								if err := w.w.Add(n); err != nil {
-									go func(e error) {
-										errors <- e
-									}(err)
-								}
-								w.Unlock()
-								if !isDir {
-									go func(nn string) {
-										filechanged <- nn
-									}(n)
-								}
-							}
-						}
+						continue
 					}
+					nm := d.Name()
+					if w.shouldIgnore(nm) {
+						w.Unlock()
+						continue
+					}
+					isDir := d.IsDir()
+					if !isDir && !w.fileMatch(nm) {
+						w.Unlock()
+						continue
+					}
+					if err := w.w.Add(n); err != nil {
+						go func(e error) {
+							errors <- e
+						}(err)
+					}
+					w.Unlock()
+					if !isDir {
+						go func(nn string) {
+							filechanged <- nn
+						}(n)
+					}
+
 				}
 
 				// we should not need to handle match and ignores here, since the corresponding
@@ -133,13 +136,13 @@ func (w *Watcher) Run(filechanged chan<- string, dirchanged chan<- bool, errors 
 
 				if ev.Op&fsnotify.Rename == fsnotify.Rename {
 					go func() {
-						dirchanged <- true
+						filechanged <- ""
 					}()
 				}
 
 				if ev.Op&fsnotify.Remove == fsnotify.Remove {
 					go func() {
-						dirchanged <- true
+						filechanged <- ""
 					}()
 				}
 			case err := <-w.w.Errors:

@@ -112,19 +112,15 @@ func New(watchDir, runCmd string, configs ...Config) *RunCommand {
 // terminate and kill the running process and end the observation
 func (rc *RunCommand) Run(errors chan error) (Stoppable, error) {
 	filechanged := make(chan string, rc.bufSize)
-	dirchanged := make(chan bool, rc.bufSize)
 
 	watch, err := watcher.New(rc.dir, rc.matchFiles, rc.ignore)
 	if err != nil {
 		return nil, err
 	}
 	proc := shellproc.New(rc.stdout, rc.stderr)
-	obs, err := observer.New(rc.cmd, rc.dir, proc, rc.bufSize)
-	if err != nil {
-		return nil, err
-	}
+	obs := observer.New(rc.cmd, rc.dir, proc, rc.bufSize)
 
-	watch.Run(filechanged, dirchanged, errors)
-	obs.Run(filechanged, dirchanged, rc.sleep)
+	watch.Run(filechanged, errors)
+	obs.Run(filechanged, rc.sleep)
 	return obs, nil
 }

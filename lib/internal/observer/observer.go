@@ -1,7 +1,6 @@
 package observer
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -34,30 +33,30 @@ type Observer struct {
 	watchDir      string
 	ReportRemoved bool
 	bufSize       int
+	DirOnly       bool
 }
 
-func New(command string, watchDir string, proc Process, bufSize int) (*Observer, error) {
-	if proc == nil {
-		return nil, fmt.Errorf("missing proc is not allowed")
+func New(command string, watchDir string, proc Process, bufSize int) *Observer {
+	obs := &Observer{
+		process:  proc,
+		command:  command,
+		watchDir: watchDir,
+		bufSize:  bufSize,
 	}
 
-	return &Observer{
-		ReportRemoved: !strings.Contains(command, "$_file"),
-		process:       proc,
-		command:       command,
-		watchDir:      watchDir,
-		bufSize:       bufSize,
-	}, nil
+	if !strings.Contains(command, "$_file") {
+		obs.ReportRemoved = true
+		obs.DirOnly = true
+	}
+
+	return obs
 }
 
 // if the given file is already inside the queue, it is not added to the q
 func (o *Observer) addToQueue(file string) {
 	o.queueMutex.Lock()
 	defer o.queueMutex.Unlock()
-
-	if !o.queueTrack[file] {
-		o.queueTrack[file] = true
-	}
+	o.queueTrack[file] = true
 }
 
 // next returns a closure over the queue, so that
@@ -65,6 +64,15 @@ func (o *Observer) addToQueue(file string) {
 // it can call the func to get the filename
 // if the filename is empty, this means, that is has already
 // been processed in the meantime
+// here is all the meat:
+// o.next() returns a closure to lookup file
+// this closure is consumed by the process when it is ready
+// for processing the next file.
+// therefor the closure sits in the next channel waiting to be called
+// when it is called, file is deleted from the queue, so that the same file
+// will only be processed, if it changed after the process began to proceed it
+// since we break the loop on stop and kill, there is no need to take care of next
+// wrt to stopped processes
 func (o *Observer) next(file string) func() (proceed bool, file string) {
 	return func() (bool, string) {
 		o.queueMutex.Lock()
@@ -104,9 +112,32 @@ func (o *Observer) Terminate(timeout time.Duration) error {
 }
 
 // Run may only be called once
-func (o *Observer) Run(filechanged <-chan string, dirchanged <-chan bool, sleep time.Duration) {
+func (o *Observer) Run(filechanged <-chan string, sleep time.Duration) {
 	next := make(chan func() (bool, string), o.bufSize)
 	o.queueTrack = map[string]bool{}
+
+	/*
+		   Architecture
+
+		   I. Have a goroutine to  listen on the filechanges and dirchanges and adding reported files to the queue.
+		      The queue is used to "cleanup" the needed runs. If n new file changes arrives while running the command,
+		      we just want to keep one file change per file, because any other run on the same file would be obsoleted
+		      anyway by the next. A directory change (i.e. removal and renaming of a file; file name is unknown) is
+		      just a special file change with the filename being empty. When ReportRemoved is true (set when there is no
+		      $_file placeholder inside the command), the file name for the queue and the callback is always "".
+		      That means, it is just tracked, that the command has to be run again (once for all kind of file changes
+		      in the meantime). Since the next method returns a callback with a closure over the requested file, it is
+		      able to lookup this file inside the queue when being called.
+		  II. A second independant goroutine is listening of the "next" callback channel and stepping through it one by one.
+		      The callback is called and is a closure over the requested file name. When being called, it just checks, if
+		      the file is still in the queue (and therefor a run is required) and removes the file from the queue, since it's
+		      gonna be processed, so the next callback checking for the file will report that no run is needed, unless a new
+		      file or dir change arrived in the meantime.
+
+			Since both goroutines are decoupled the reported changes are buffered inside the queue and the callback channel.
+			So we need to make sure the callback channel is large enough for some slow runners. Therefor it is tuneable.
+
+	*/
 
 	go func() {
 		// blocking until we get something new
@@ -138,35 +169,8 @@ func (o *Observer) Run(filechanged <-chan string, dirchanged <-chan bool, sleep 
 		}
 	}()
 
-	if o.ReportRemoved {
-		go func() {
-			for hasChanged := range dirchanged {
-				o.procMutex.RLock()
-				stopped := o.procStopped
-				o.procMutex.RUnlock()
-				if stopped {
-					break
-				}
-				// fmt.Println("got dirchanged")
-				if hasChanged {
-					// fmt.Println("adding to q")
-					o.addToQueue("")
-					// here is all the meat:
-					// o.next() returns a closure to lookup file
-					// this closure is consumed by the process when it is ready
-					// for processing the next file.
-					// therefor the closure sits in the next channel waiting to be called
-					// when it is called, file is deleted from the queue, so that the same file
-					// will only be processed, if it changed after the process began to proceed it
-					// since we break the loop on stop and kill, there is no need to take care of next
-					// wrt to stopped processes
-					next <- o.next("")
-				}
-			}
-		}()
-	}
-
 	go func() {
+		// blocking until we get something new
 		for f := range filechanged {
 			o.procMutex.RLock()
 			stopped := o.procStopped
@@ -175,17 +179,25 @@ func (o *Observer) Run(filechanged <-chan string, dirchanged <-chan bool, sleep 
 				break
 			}
 
-			o.addToQueue(f)
-			// here is all the meat:
-			// o.next() returns a closure to lookup file
-			// this closure is consumed by the process when it is ready
-			// for processing the next file.
-			// therefor the closure sits in the next channel waiting to be called
-			// when it is called, file is deleted from the queue, so that the same file
-			// will only be processed, if it changed after the process began to proceed it
-			// since we break the loop on stop and kill, there is no need to take care of next
-			// wrt to stopped processes
-			next <- o.next(f)
+			// either just add non empty filenames (add ignore file removes and renames) or
+			// just add filenames as they are (if o.ReportRemoved is true)
+			// we are only interested in changes with filenames (no removed or renamed files) (e.g. runcommand package with command containing $_file)
+			if f != "" && !o.ReportRemoved {
+				o.addToQueue(f)
+				next <- o.next(f)
+			}
+
+			// we are only interested in directory changes, so always add empty filename (e.g. runcommand package with command not containing $_file)
+			if o.DirOnly {
+				o.addToQueue("")
+				next <- o.next("")
+			}
+
+			// we are interested in filechanges and directory changes (e.g. runfunc package)
+			if !o.DirOnly && o.ReportRemoved {
+				o.addToQueue(f)
+				next <- o.next(f)
+			}
 		}
 	}()
 	return

@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/metakeule/config"
 	"github.com/metakeule/observe/lib/runcommand"
-	"gopkg.in/metakeule/config.v1"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -50,6 +50,11 @@ var (
 
 	bufSizeArg = args.NewInt32("bufsize", "the size of the message buffer for changed files and changed directories",
 		config.Default(int32(runcommand.DefaultBufSize)),
+	)
+
+	killArg = args.NewBool("kill", "kills the running command if there is a change (implies sleep=0)",
+		config.Default(false),
+		config.Shortflag('k'),
 	)
 )
 
@@ -108,13 +113,24 @@ steps:
 				}
 			}
 		case 6:
-			rc := runcommand.New(dir, cmdArg.Get(),
+			opts := []runcommand.Config{
 				runcommand.BufSize(int(bufSizeArg.Get())),
 				runcommand.Ignore(ignore),
 				runcommand.MatchFiles(match),
-				runcommand.Sleep(sleep),
 				runcommand.Stdout(os.Stdout),
 				runcommand.Stderr(os.Stderr),
+			}
+
+			if killArg.Get() {
+				sleep = 0
+				opts = append(opts, runcommand.KillOnChange())
+			}
+
+			opts = append(opts, runcommand.Sleep(sleep))
+
+			rc := runcommand.New(dir,
+				cmdArg.Get(),
+				opts...,
 			)
 
 			errors = make(chan error, 1)

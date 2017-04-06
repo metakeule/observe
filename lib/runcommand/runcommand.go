@@ -16,14 +16,15 @@ type Stoppable interface {
 }
 
 type RunCommand struct {
-	stdout     io.Writer
-	stderr     io.Writer
-	matchFiles *regexp.Regexp
-	ignore     *regexp.Regexp
-	sleep      time.Duration
-	cmd        string
-	dir        string
-	bufSize    int
+	stdout       io.Writer
+	stderr       io.Writer
+	matchFiles   *regexp.Regexp
+	ignore       *regexp.Regexp
+	sleep        time.Duration
+	cmd          string
+	dir          string
+	bufSize      int
+	killOnChange bool
 }
 
 const DefaultBufSize = 10000
@@ -33,6 +34,13 @@ type Config func(*RunCommand)
 func Stdout(stdout io.Writer) Config {
 	return func(rc *RunCommand) {
 		rc.stdout = stdout
+	}
+}
+
+// if killOnChange is true the running process will be killed, if there is a change
+func KillOnChange() Config {
+	return func(rc *RunCommand) {
+		rc.killOnChange = true
 	}
 }
 
@@ -121,6 +129,6 @@ func (rc *RunCommand) Run(errors chan error) (Stoppable, error) {
 	obs := observer.New(rc.cmd, rc.dir, proc, rc.bufSize)
 
 	watch.Run(filechanged, errors)
-	obs.Run(filechanged, rc.sleep)
+	obs.Run(filechanged, rc.sleep, rc.killOnChange)
 	return obs, nil
 }

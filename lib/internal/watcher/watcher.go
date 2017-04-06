@@ -128,10 +128,39 @@ func (w *Watcher) Run(filechanged chan<- string, errors chan<- error) {
 
 				// we should not need to handle match and ignores here, since the corresponding
 				// files and dirs should not have been tracked/added in the first place
+				// but experience shows that it is not the case
 				if ev.Op&fsnotify.Write == fsnotify.Write {
-					go func(n string) {
-						filechanged <- n
-					}(ev.Name)
+					w.Lock()
+					n := ev.Name
+					d, err := os.Stat(n)
+					if err != nil {
+						w.Unlock()
+						go func(e error) {
+							errors <- e
+						}(err)
+						continue
+					}
+					nm := d.Name()
+					if w.shouldIgnore(nm) {
+						w.Unlock()
+						continue
+					}
+					isDir := d.IsDir()
+					if !isDir && !w.fileMatch(nm) {
+						w.Unlock()
+						continue
+					}
+					if err := w.w.Add(n); err != nil {
+						go func(e error) {
+							errors <- e
+						}(err)
+					}
+					w.Unlock()
+					if !isDir {
+						go func(nn string) {
+							filechanged <- nn
+						}(n)
+					}
 				}
 
 				if ev.Op&fsnotify.Rename == fsnotify.Rename {

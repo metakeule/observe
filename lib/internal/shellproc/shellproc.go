@@ -22,14 +22,26 @@ func New(stdout, stderr io.Writer) *ShellProc {
 	}
 }
 
+func (s *ShellProc) Kill2() error {
+	if s.process == nil {
+		return nil
+	}
+	err := s.process.Kill()
+	s.process.Wait()
+	return err
+}
+
 // since Kill, Terminate and Run are guaranteed (by observe) to never be called at the same time
 // we don't have to care about concurrency here
 func (s *ShellProc) Kill() error {
 	if s.process == nil {
 		return nil
 	}
+
+	err := s.process.Kill()
+	s.process.Wait()
 	s.process = nil
-	return s.process.Kill()
+	return err
 }
 
 // tries to terminate process and kills it after timeout and if it does not exit properly
@@ -74,7 +86,8 @@ func (s *ShellProc) Terminate(timeout time.Duration) error {
 }
 
 // run is blocking
-func (s *ShellProc) Run(command string) {
+// block blocks until command has finished
+func (s *ShellProc) Run(command string, block bool) {
 	cmd := execCommand(command)
 	cmd.Stderr = s.stderr
 	cmd.Stdout = s.stdout
@@ -87,16 +100,19 @@ func (s *ShellProc) Run(command string) {
 	}
 
 	s.process = cmd.Process
-	// TODO: check under which conditions Wait returns an error and which kind of errors they are
-	// and if we want to kill or terminate the process.p then
-	err = cmd.Wait()
-	if err == nil {
-		return
-	}
-	fmt.Fprintln(cmd.Stderr, err)
-	_, err = s.process.Wait()
-	if err != nil {
+	if block {
+
+		// TODO: check under which conditions Wait returns an error and which kind of errors they are
+		// and if we want to kill or terminate the process.p then
+		err = cmd.Wait()
+		if err == nil {
+			return
+		}
 		fmt.Fprintln(cmd.Stderr, err)
+		_, err = s.process.Wait()
+		if err != nil {
+			fmt.Fprintln(cmd.Stderr, err)
+		}
 	}
 	return
 }

@@ -16,24 +16,27 @@ type Process interface {
 	// Kill forces the ending of the process
 	Kill() error
 
+	Kill2() error
+
 	// Run runs the command string. There will be no two calls of Run at the same time
-	Run(cmd string)
+	Run(cmd string, block bool)
 }
 
 // Observer should be used to run and terminate the processes
 // it guarantees that just one process is running at the same time
 // and that its Run(), Kill() and Terminat() aren't run st frr
 type Observer struct {
-	queueMutex    sync.Mutex
-	procMutex     sync.RWMutex
-	procStopped   bool
-	queueTrack    map[string]bool
-	process       Process
-	command       string
-	watchDir      string
-	ReportRemoved bool
-	bufSize       int
-	DirOnly       bool
+	queueMutex         sync.Mutex
+	procMutex          sync.RWMutex
+	procStopped        bool
+	procKilledOnChange bool
+	queueTrack         map[string]bool
+	process            Process
+	command            string
+	watchDir           string
+	ReportRemoved      bool
+	bufSize            int
+	DirOnly            bool
 }
 
 func New(command string, watchDir string, proc Process, bufSize int) *Observer {
@@ -89,6 +92,14 @@ func (o *Observer) next(file string) func() (proceed bool, file string) {
 	}
 }
 
+func (o *Observer) killOnChange() error {
+	if o.procStopped || o.procKilledOnChange {
+		return nil
+	}
+	o.procKilledOnChange = true
+	return o.process.Kill2()
+}
+
 func (o *Observer) Kill() error {
 	o.procMutex.Lock()
 	defer o.procMutex.Unlock()
@@ -112,7 +123,8 @@ func (o *Observer) Terminate(timeout time.Duration) error {
 }
 
 // Run may only be called once
-func (o *Observer) Run(filechanged <-chan string, sleep time.Duration) {
+// killOnChange means: if file changes, previous command is killed
+func (o *Observer) Run(filechanged <-chan string, sleep time.Duration, killOnChange bool) {
 	next := make(chan func() (bool, string), o.bufSize)
 	o.queueTrack = map[string]bool{}
 
@@ -156,7 +168,7 @@ func (o *Observer) Run(filechanged <-chan string, sleep time.Duration) {
 			proceed, file := fn()
 
 			// file was already processed, so skip and wait for the next
-			if !proceed {
+			if !proceed || file == "" {
 				continue
 			}
 
@@ -164,7 +176,11 @@ func (o *Observer) Run(filechanged <-chan string, sleep time.Duration) {
 			c = strings.Replace(c, "$_wd", o.watchDir, -1)
 
 			o.procMutex.Lock()
-			o.process.Run(c)
+			if killOnChange && !o.procKilledOnChange {
+				o.killOnChange()
+			}
+			o.procKilledOnChange = false
+			o.process.Run(c, !killOnChange)
 			o.procMutex.Unlock()
 		}
 	}()

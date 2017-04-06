@@ -23,7 +23,12 @@ func (f *funcProcess) Kill() error {
 	return nil
 }
 
-func (f *funcProcess) Run(file string) {
+// Kill2 does nothing
+func (f *funcProcess) Kill2() error {
+	return nil
+}
+
+func (f *funcProcess) Run(file string, block bool) {
 	err := f.fn(f.dir, file)
 	if err != nil {
 		f.errors <- err
@@ -125,6 +130,6 @@ func (rc *RunFunc) Run(errors chan error) (Stoppable, error) {
 	obs.DirOnly = false
 
 	watch.Run(filechanged, errors)
-	obs.Run(filechanged, rc.sleep)
+	obs.Run(filechanged, rc.sleep, false)
 	return obs, nil
 }

@@ -1,6 +1,7 @@
 package observer
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -37,14 +38,16 @@ type Observer struct {
 	ReportRemoved      bool
 	bufSize            int
 	DirOnly            bool
+	verbose            bool
 }
 
-func New(command string, watchDir string, proc Process, bufSize int) *Observer {
+func New(command string, watchDir string, proc Process, bufSize int, verbose bool) *Observer {
 	obs := &Observer{
 		process:  proc,
 		command:  command,
 		watchDir: watchDir,
 		bufSize:  bufSize,
+		verbose:  verbose,
 	}
 
 	if !strings.Contains(command, "$_file") {
@@ -78,11 +81,17 @@ func (o *Observer) addToQueue(file string) {
 // wrt to stopped processes
 func (o *Observer) next(file string) func() (proceed bool, file string) {
 	return func() (bool, string) {
+		if o.verbose {
+			fmt.Printf("next called for: %#v\n", file)
+		}
 		o.queueMutex.Lock()
 
 		_, proceed := o.queueTrack[file]
 
 		if proceed {
+			if o.verbose {
+				fmt.Printf("don't proceed, already processed: %#v\n", file)
+			}
 			// remove the file, since we will proceed now
 			delete(o.queueTrack, file)
 		}
@@ -97,6 +106,9 @@ func (o *Observer) killOnChange() error {
 		return nil
 	}
 	o.procKilledOnChange = true
+	if o.verbose {
+		fmt.Println("killing process (triggered by change)")
+	}
 	return o.process.Kill2()
 }
 
@@ -107,6 +119,9 @@ func (o *Observer) Kill() error {
 		return nil
 	}
 	o.procStopped = true
+	if o.verbose {
+		fmt.Println("killing process")
+	}
 	return o.process.Kill()
 }
 
@@ -119,6 +134,9 @@ func (o *Observer) Terminate(timeout time.Duration) error {
 	}
 	o.procStopped = true
 	o.procMutex.Unlock()
+	if o.verbose {
+		fmt.Println("terminating process")
+	}
 	return o.Terminate(timeout)
 }
 
@@ -169,6 +187,9 @@ func (o *Observer) Run(filechanged <-chan string, sleep time.Duration, killOnCha
 
 			// file was already processed, so skip and wait for the next
 			if !proceed || file == "" {
+				if o.verbose {
+					fmt.Printf("file %#v already processed, skipping\n", file)
+				}
 				continue
 			}
 
@@ -180,6 +201,9 @@ func (o *Observer) Run(filechanged <-chan string, sleep time.Duration, killOnCha
 				o.killOnChange()
 			}
 			o.procKilledOnChange = false
+			if o.verbose {
+				fmt.Printf("running: %#v\n", c)
+			}
 			o.process.Run(c, !killOnChange)
 			o.procMutex.Unlock()
 		}
@@ -188,10 +212,16 @@ func (o *Observer) Run(filechanged <-chan string, sleep time.Duration, killOnCha
 	go func() {
 		// blocking until we get something new
 		for f := range filechanged {
+			if o.verbose {
+				fmt.Printf("observer received filechanged: %#v\n", f)
+			}
 			o.procMutex.RLock()
 			stopped := o.procStopped
 			o.procMutex.RUnlock()
 			if stopped {
+				if o.verbose {
+					fmt.Printf("proc stopped, ignoring: %#v\n", f)
+				}
 				break
 			}
 
@@ -199,18 +229,27 @@ func (o *Observer) Run(filechanged <-chan string, sleep time.Duration, killOnCha
 			// just add filenames as they are (if o.ReportRemoved is true)
 			// we are only interested in changes with filenames (no removed or renamed files) (e.g. runcommand package with command containing $_file)
 			if f != "" && !o.ReportRemoved {
+				if o.verbose {
+					fmt.Printf("adding to queue: %#v\n", f)
+				}
 				o.addToQueue(f)
 				next <- o.next(f)
 			}
 
 			// we are only interested in directory changes, so always add empty filename (e.g. runcommand package with command not containing $_file)
 			if o.DirOnly {
+				if o.verbose {
+					fmt.Println("adding directory (DirOnly set)")
+				}
 				o.addToQueue("")
 				next <- o.next("")
 			}
 
 			// we are interested in filechanges and directory changes (e.g. runfunc package)
 			if !o.DirOnly && o.ReportRemoved {
+				if o.verbose {
+					fmt.Printf("adding: %#v\n", f)
+				}
 				o.addToQueue(f)
 				next <- o.next(f)
 			}

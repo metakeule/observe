@@ -2,31 +2,33 @@ package main
 
 import (
 	"fmt"
-	"github.com/metakeule/config"
-	"github.com/metakeule/observe/lib/runcommand"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/metakeule/observe/lib/runcommand"
+	"gitlab.com/metakeule/config"
 )
 
 // TODO: write docs and tests and test it on windows
 
 var (
-	args = config.MustNew("observe", "0.0.1",
+	args = config.MustNew("observe", "0.0.4",
 		"observe runs a command when the content of a directory changes")
 
 	dirArg = args.NewString("dir",
 		"directory to be observed",
 		config.Shortflag('d'), config.Default("."))
 
-	cmdArg = args.NewString("cmd",
+	cmdArg = args.LastString("cmd",
 		"command to be executed, $file will be replaced by the changed file",
-		config.Shortflag('c'), config.Required)
+		config.Required)
 
 	matchArg = args.NewString("match",
 		"match files based on the given regular expression (posix)",
@@ -56,6 +58,10 @@ var (
 		config.Default(false),
 		config.Shortflag('k'),
 	)
+
+	verboseArg = args.NewBool("verbose", "output debugging information",
+		config.Default(false),
+	)
 )
 
 func main() {
@@ -72,6 +78,7 @@ func main() {
 		timeout time.Duration
 		sleep   time.Duration
 		errors  chan error
+		verbose bool
 	)
 
 steps:
@@ -81,6 +88,7 @@ steps:
 			break steps
 		// count a number up for each following step
 		case 0:
+			verbose = verboseArg.Get()
 			dir = dirArg.Get()
 			if dir == "." {
 				dir, err = os.Getwd()
@@ -88,9 +96,16 @@ steps:
 		case 1:
 			dir, err = filepath.Abs(dir)
 		case 2:
+			if verbose {
+				fmt.Printf("dir: %v\n", dir)
+			}
 			timeout, err = time.ParseDuration(timeoutArg.Get())
+			if verbose {
+				fmt.Printf("timeout: %v\n", timeout)
+			}
 		case 3:
 			sleep, err = time.ParseDuration(sleepArg.Get())
+
 		case 4:
 			switch m := matchArg.Get(); m {
 			case "", "*":
@@ -99,6 +114,9 @@ steps:
 					err = fmt.Errorf("argument -match must not contain path separator %v", filepath.Separator)
 				} else {
 					match, err = regexp.CompilePOSIX(m)
+				}
+				if verbose {
+					fmt.Printf("match: %v\n", m)
 				}
 
 			}
@@ -110,6 +128,9 @@ steps:
 					err = fmt.Errorf("argument -ignore must not contain path separator %v", filepath.Separator)
 				} else {
 					ignore, err = regexp.CompilePOSIX(i)
+					if verbose {
+						fmt.Printf("ignore: %v\n", i)
+					}
 				}
 			}
 		case 6:
@@ -121,9 +142,20 @@ steps:
 				runcommand.Stderr(os.Stderr),
 			}
 
+			if verbose {
+				opts = append(opts, runcommand.Verbose())
+			}
+
 			if killArg.Get() {
 				sleep = 0
 				opts = append(opts, runcommand.KillOnChange())
+				if verbose {
+					fmt.Printf("kill: true\n")
+				}
+			}
+
+			if verbose {
+				fmt.Printf("sleep: %v\n", sleep)
 			}
 
 			opts = append(opts, runcommand.Sleep(sleep))
@@ -172,6 +204,8 @@ steps:
 						}
 					case e := <-errors:
 						fmt.Fprintf(os.Stderr, "Error(%T): %s", e, e)
+					default:
+						runtime.Gosched()
 					}
 				}
 			}()

@@ -47,6 +47,7 @@ type RunFunc struct {
 	ignore     *regexp.Regexp
 	sleep      time.Duration
 	bufSize    int
+	verbose    bool
 }
 
 const DefaultBufSize = 10000
@@ -113,7 +114,7 @@ func New(watchDir string, fn func(dir, file string) error, configs ...Config) *R
 func (rc *RunFunc) Run(errors chan error) (Stoppable, error) {
 	filechanged := make(chan string, rc.bufSize)
 
-	watch, err := watcher.New(rc.dir, rc.matchFiles, rc.ignore)
+	watch, err := watcher.New(rc.dir, rc.matchFiles, rc.ignore, rc.verbose)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +125,7 @@ func (rc *RunFunc) Run(errors chan error) (Stoppable, error) {
 		dir:    rc.dir,
 	}
 
-	obs := observer.New("$_file", rc.dir, proc, rc.bufSize)
+	obs := observer.New("$_file", rc.dir, proc, rc.bufSize, rc.verbose)
 
 	obs.ReportRemoved = true
 	obs.DirOnly = false

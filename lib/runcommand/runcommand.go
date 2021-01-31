@@ -25,11 +25,18 @@ type RunCommand struct {
 	dir          string
 	bufSize      int
 	killOnChange bool
+	verbose      bool
 }
 
 const DefaultBufSize = 10000
 
 type Config func(*RunCommand)
+
+func Verbose() Config {
+	return func(rc *RunCommand) {
+		rc.verbose = true
+	}
+}
 
 func Stdout(stdout io.Writer) Config {
 	return func(rc *RunCommand) {
@@ -121,12 +128,12 @@ func New(watchDir, runCmd string, configs ...Config) *RunCommand {
 func (rc *RunCommand) Run(errors chan error) (Stoppable, error) {
 	filechanged := make(chan string, rc.bufSize)
 
-	watch, err := watcher.New(rc.dir, rc.matchFiles, rc.ignore)
+	watch, err := watcher.New(rc.dir, rc.matchFiles, rc.ignore, rc.verbose)
 	if err != nil {
 		return nil, err
 	}
-	proc := shellproc.New(rc.stdout, rc.stderr)
-	obs := observer.New(rc.cmd, rc.dir, proc, rc.bufSize)
+	proc := shellproc.New(rc.stdout, rc.stderr, rc.verbose)
+	obs := observer.New(rc.cmd, rc.dir, proc, rc.bufSize, rc.verbose)
 
 	watch.Run(filechanged, errors)
 	obs.Run(filechanged, rc.sleep, rc.killOnChange)

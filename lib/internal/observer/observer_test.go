@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -30,21 +31,26 @@ type mockProcess struct {
 	stderr     io.Writer
 	// sleepSeconds int
 	waitError bool
+	didrun    bool
 }
 
-func (p *mockProcess) Terminate(timeout time.Duration) chan error {
-	term := make(chan error)
-	go func() {
-		println("terminated")
-		p.terminated = true
-		term <- nil
-	}()
+func (p *mockProcess) Run(string, bool) {
+	p.didrun = true
+}
 
-	return term
+func (p *mockProcess) Terminate(timeout time.Duration) error {
+	p.terminated = true
+	return nil
 }
 
 func (p *mockProcess) Kill() error {
 	println("killed")
+	p.killed = true
+	return nil
+}
+
+func (p *mockProcess) Kill2() error {
+	println("killed2")
 	p.killed = true
 	return nil
 }
@@ -141,6 +147,7 @@ func runOnce(r Runner, file string, a action) (stdout string, stderr string, err
 			// println("finished")
 			// wg.Done()
 			default:
+				runtime.Gosched()
 			}
 		}
 	}()
@@ -156,6 +163,7 @@ func runOnce(r Runner, file string, a action) (stdout string, stderr string, err
 				wg.Done()
 				return
 			default:
+				runtime.Gosched()
 			}
 		}
 	}()

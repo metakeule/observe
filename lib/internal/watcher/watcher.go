@@ -1,11 +1,14 @@
 package watcher
 
 import (
-	"gopkg.in/fsnotify.v1"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sync"
+
+	"gopkg.in/fsnotify.v1"
 )
 
 type Watcher struct {
@@ -13,23 +16,25 @@ type Watcher struct {
 	match *regexp.Regexp
 	dir   string
 	sync.Mutex
-	ignore *regexp.Regexp
+	ignore  *regexp.Regexp
+	verbose bool
 }
 
 // New creates a watcher, watching all files and directories inside dir (recursively)
 // If matchFiles is not nil, only the files matching matchFiles are respected.
 // If ignore is not nil, files and directories matching ignore are ignored.
 // An error is returned if the watcher could not be properly initialized.
-func New(dir string, matchFiles, ignore *regexp.Regexp) (w *Watcher, err error) {
+func New(dir string, matchFiles, ignore *regexp.Regexp, verbose bool) (w *Watcher, err error) {
 	dir, err = filepath.Abs(dir)
 	if err != nil {
 		return
 	}
 
 	w = &Watcher{
-		match:  matchFiles,
-		dir:    dir,
-		ignore: ignore,
+		match:   matchFiles,
+		dir:     dir,
+		ignore:  ignore,
+		verbose: verbose,
 	}
 	w.w, err = fsnotify.NewWatcher()
 
@@ -68,6 +73,9 @@ func (w *Watcher) walk(path string, info os.FileInfo, err error) error {
 	}
 
 	if w.shouldIgnore(info.Name()) {
+		if w.verbose {
+			fmt.Printf("ignoring: %#v\n", info.Name())
+		}
 		if info.IsDir() {
 			return filepath.SkipDir
 		}
@@ -75,7 +83,14 @@ func (w *Watcher) walk(path string, info os.FileInfo, err error) error {
 	}
 
 	if !info.IsDir() && !w.fileMatch(info.Name()) {
+		if w.verbose {
+			fmt.Printf("ignoring: %#v\n", info.Name())
+		}
 		return nil
+	}
+
+	if w.verbose {
+		fmt.Printf("adding: %#v\n", path)
 	}
 
 	return w.w.Add(path)
@@ -92,6 +107,9 @@ func (w *Watcher) Run(filechanged chan<- string, errors chan<- error) {
 			select {
 			case ev := <-w.w.Events:
 				if ev.Op&fsnotify.Create == fsnotify.Create {
+					if w.verbose {
+						fmt.Printf("fsnotify.Create: %#v\n", ev.Name)
+					}
 					w.Lock()
 					n := ev.Name
 					d, err := os.Stat(n)
@@ -104,21 +122,36 @@ func (w *Watcher) Run(filechanged chan<- string, errors chan<- error) {
 					}
 					nm := d.Name()
 					if w.shouldIgnore(nm) {
+						if w.verbose {
+							fmt.Printf("ignoring: %#v\n", ev.Name)
+						}
 						w.Unlock()
 						continue
 					}
 					isDir := d.IsDir()
 					if !isDir && !w.fileMatch(nm) {
+						if w.verbose {
+							fmt.Printf("not matching: %#v\n", ev.Name)
+						}
 						w.Unlock()
 						continue
 					}
+					if w.verbose {
+						fmt.Printf("adding matching: %#v\n", ev.Name)
+					}
 					if err := w.w.Add(n); err != nil {
+						if w.verbose {
+							fmt.Printf("error while adding: %v\n", err.Error())
+						}
 						go func(e error) {
 							errors <- e
 						}(err)
 					}
 					w.Unlock()
 					if !isDir {
+						if w.verbose {
+							fmt.Printf("file changed: %v\n", n)
+						}
 						go func(nn string) {
 							filechanged <- nn
 						}(n)
@@ -130,6 +163,9 @@ func (w *Watcher) Run(filechanged chan<- string, errors chan<- error) {
 				// files and dirs should not have been tracked/added in the first place
 				// but experience shows that it is not the case
 				if ev.Op&fsnotify.Write == fsnotify.Write {
+					if w.verbose {
+						fmt.Printf("fsnotify.Write: %v\n", ev.Name)
+					}
 					w.Lock()
 					n := ev.Name
 					d, err := os.Stat(n)
@@ -142,21 +178,37 @@ func (w *Watcher) Run(filechanged chan<- string, errors chan<- error) {
 					}
 					nm := d.Name()
 					if w.shouldIgnore(nm) {
+						if w.verbose {
+							fmt.Printf("ignoring: %v\n", ev.Name)
+						}
 						w.Unlock()
 						continue
 					}
 					isDir := d.IsDir()
 					if !isDir && !w.fileMatch(nm) {
+						if w.verbose {
+							fmt.Printf("not matching: %v\n", ev.Name)
+						}
 						w.Unlock()
 						continue
 					}
+
+					if w.verbose {
+						fmt.Printf("adding: %v\n", ev.Name)
+					}
 					if err := w.w.Add(n); err != nil {
+						if w.verbose {
+							fmt.Printf("error while adding: %v\n", err.Error())
+						}
 						go func(e error) {
 							errors <- e
 						}(err)
 					}
 					w.Unlock()
 					if !isDir {
+						if w.verbose {
+							fmt.Printf("changed file: %v\n", n)
+						}
 						go func(nn string) {
 							filechanged <- nn
 						}(n)
@@ -164,20 +216,31 @@ func (w *Watcher) Run(filechanged chan<- string, errors chan<- error) {
 				}
 
 				if ev.Op&fsnotify.Rename == fsnotify.Rename {
+					if w.verbose {
+						fmt.Printf("fsnotify.Rename: %v\n", ev.Name)
+					}
 					go func() {
 						filechanged <- ""
 					}()
 				}
 
 				if ev.Op&fsnotify.Remove == fsnotify.Remove {
+					if w.verbose {
+						fmt.Printf("fsnotify.Remove: %v\n", ev.Name)
+					}
 					go func() {
 						filechanged <- ""
 					}()
 				}
 			case err := <-w.w.Errors:
+				if w.verbose {
+					fmt.Printf("err: %v\n", err.Error())
+				}
 				go func(e error) {
 					errors <- e
 				}(err)
+			default:
+				runtime.Gosched()
 			}
 		}
 	}()

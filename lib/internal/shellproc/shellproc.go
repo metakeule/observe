@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -13,18 +14,23 @@ type ShellProc struct {
 	process *os.Process
 	stdout  io.Writer
 	stderr  io.Writer
+	verbose bool
 }
 
-func New(stdout, stderr io.Writer) *ShellProc {
+func New(stdout, stderr io.Writer, verbose bool) *ShellProc {
 	return &ShellProc{
-		stdout: stdout,
-		stderr: stderr,
+		stdout:  stdout,
+		stderr:  stderr,
+		verbose: verbose,
 	}
 }
 
 func (s *ShellProc) Kill2() error {
 	if s.process == nil {
 		return nil
+	}
+	if s.verbose {
+		fmt.Printf("kill2 process: %#v\n", s.process.Pid)
 	}
 	err := s.process.Kill()
 	s.process.Wait()
@@ -38,6 +44,9 @@ func (s *ShellProc) Kill() error {
 		return nil
 	}
 
+	if s.verbose {
+		fmt.Printf("kill process: %#v\n", s.process.Pid)
+	}
 	err := s.process.Kill()
 	s.process.Wait()
 	s.process = nil
@@ -51,6 +60,9 @@ func (s *ShellProc) Terminate(timeout time.Duration) error {
 	}
 	st := make(chan *os.ProcessState)
 	terminator := make(chan error)
+	if s.verbose {
+		fmt.Printf("terminate process: %#v\n", s.process.Pid)
+	}
 	err := s.process.Signal(syscall.SIGTERM)
 
 	if err != nil {
@@ -74,7 +86,9 @@ func (s *ShellProc) Terminate(timeout time.Duration) error {
 				//terminator <- errors.New("timeout")
 				terminator <- s.Kill()
 				break
-				// do we need default: here? test it with timeout
+			// do we need default: here? test it with timeout
+			default:
+				runtime.Gosched()
 			}
 		}
 	}()
@@ -91,6 +105,9 @@ func (s *ShellProc) Run(command string, block bool) {
 	cmd := execCommand(command)
 	cmd.Stderr = s.stderr
 	cmd.Stdout = s.stdout
+	if s.verbose {
+		fmt.Printf("run process: %#v\n", command)
+	}
 	err := cmd.Start()
 
 	if err != nil {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"syscall"
 	"time"
 )
@@ -86,9 +85,6 @@ func (s *ShellProc) Terminate(timeout time.Duration) error {
 				//terminator <- errors.New("timeout")
 				terminator <- s.Kill()
 				break
-			// do we need default: here? test it with timeout
-			default:
-				runtime.Gosched()
 			}
 		}
 	}()

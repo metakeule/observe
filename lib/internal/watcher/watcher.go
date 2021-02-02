@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sync"
 
 	"gopkg.in/fsnotify.v1"
@@ -239,8 +238,6 @@ func (w *Watcher) Run(filechanged chan<- string, errors chan<- error) {
 				go func(e error) {
 					errors <- e
 				}(err)
-			default:
-				runtime.Gosched()
 			}
 		}
 	}()
